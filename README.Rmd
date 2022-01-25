@@ -1,0 +1,293 @@
+---
+title: "Territorial configuration of Colombian provinces"
+subtitle: 'Measures of rurality and connectivity'
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      collapse=TRUE,
+                      fig.align="center")
+```
+
+## Background project
+
+This project contains the methods, algorithms and visualizations employed by me and Dr. Juan Carlos Ramírez for the composition of the technical report *Territorial configuration of Colombian provinces* (original title in Spanish), published by ECLAC (Economic Commission for Latin America and the Caribbean).
+
+A first version of such document was published in 2017, and can be at ECLAC's [digital repository](https://repositorio.cepal.org/handle/11362/40852). An actualization is to be published in 2022. 
+
+## Motivation
+
+## Creating an index for rurality at the province level
+
+```{r cars}
+# Packages to employ
+library("dplyr")
+library("ggplot2")
+
+#############
+# INPUT DATA
+#############
+
+# Demographic data on municipalities, from Colombia's census (2018), projected to 2021 
+demo_m = read.csv2('data/population_by_municipality.csv',
+                  header = TRUE, stringsAsFactors = FALSE)
+head(demo_m)
+
+# Membership of every municipality to every province 
+m_to_p = read.csv2('data/municipality_to_province.csv',
+                  header = TRUE, stringsAsFactors = FALSE)  
+head(m_to_p)  
+
+#############
+# METHODS
+#############
+
+# Aggregate data to province level
+datap = demo_m %>% 
+  left_join(m_to_p, c('codmun'='codmun')) %>% # Join by municipality code
+  group_by(codpro,Provincia) %>% summarise(
+    # departamentos = paste0(unique(Departamento),collapse=", ")
+    n_municipios = n_distinct(codmun), # number of municipalities
+    pob_total = sum(Total), # Total population size
+    pob_cabecera = sum(Cabecera), # Population size living in the municipal seat
+    pob_disperso = sum(Disperso), # Population size living outside the municipal seat
+    area = sum(Area), # Total area
+    densidad_pob = sum(Total)/sum(Area), # Average population density
+    imp_cabeceras = 100*sum(Cabecera)/sum(Total), # Avg. % of population living in the municipal seat
+    max_cabeceras = max(Cabecera) # Population size on largest municipal seat
+  )
+datap = datap %>% 
+  left_join(demo_m %>% # Joint province-level data with largest municipal seat identification
+              dplyr::select(codmun,Municipio,Cabecera),
+            c('max_cabeceras'='Cabecera'))
+head(datap)
+
+# Data to apply Principal Component Analysis on: log(population density) + 
+# Avg. % of population living in the municipal seat + log(size of largest municipal seat)
+data_pc = datap %>% mutate(log_densidad_pob = log(densidad_pob),
+                          log_max_cabeceras = log(max_cabeceras)) %>% 
+  dplyr::select(log_densidad_pob,imp_cabeceras,log_max_cabeceras)
+head(data_pc)
+
+# Applying Principal Component Analysis
+pc = prcomp(data_pc[,-1], center = TRUE, scale. = TRUE)
+summary(pc) # The first component explains 77.1% of total variance
+
+# Standardized index:
+# The Demographic Urbanization Index of Provinces
+IDUP = 100*(pc$x[,1]-min(pc$x[,1]))/(max(pc$x[,1])-min(pc$x[,1]))
+datap$IDUP = IDUP
+
+# This index is a linear combination of transform variables.
+# Coefficients can be recovered with linear regression
+coef(lm(IDUP~log(densidad_pob)+(imp_cabeceras)+log(max_cabeceras), datap))
+
+#IDUP = -46.388 +4.128*log(densidad_pob) +0.356*imp_cabeceras +4.866*log(max_cabeceras) 
+
+# Using cutoff defined in previous methodology, 42--65, we divide provinces
+# into three groups: urban, intermediate and rural
+datap = datap %>% 
+  mutate(grupo = ifelse(IDUP>65,'Urbana',
+                        ifelse(IDUP<42,'Rural','Intermedia')))
+
+# Histogram of The Demographic Urbanization Index of Provinces
+datap %>% ggplot(aes(x=IDUP)) + 
+  geom_histogram(fill="blue",bins = 40) +
+  geom_vline(xintercept = 42, linetype="dashed", color = "red", size=1.5) +
+  geom_vline(xintercept = 65, linetype="dashed", color = "red", size=1.5) + 
+  annotate(geom="text", x=72, y=15, label="Urban ->", color="red") +
+  annotate(geom="text", x=52, y=15, label="Intermediate ->", color="red") +
+  annotate(geom="text", x=35, y=15, label="<- Rural", color="red") +
+  theme_bw() + 
+  labs(x='IDUP - Demographic Urbanization Index of Provinces',
+       y='Count of provinces')
+```
+
+## Calculating time and distance matrix 
+
+```{r, eval=FALSE}
+1+1
+```
+
+## Spatial network configuration of Colombian provinces
+
+XXX
+
+```{r}
+# iGraph package for network analysis
+library('igraph')
+
+#############
+# INPUT DATA
+#############
+
+# This matrix contains the distance of every province to every other one in terms of 
+# time to travel (in sec.) by principal road form largest seat to largest seat: t(i,j)
+# It is not defined by pairs of provinces on the same group (urban, intermediate, rural)
+matriz.t = read.csv2('data/graph-matrix-distance.csv',header=T)
+
+# This matrix contains the absolute difference of every province to every other one 
+# in terms of their Demographic Urbanization Index: abs(IDUP_i - IDUP_j)
+# It is not defined by pairs of provinces on the same group (urban, intermediate, rural)
+matriz.f = read.csv2('data/graph-matrix-difference.csv',header=T)
+
+# There are provinces that are isolated by road, or > 7h to a urban/intermediate city
+exclude = c(16,70,72,95,124,133,138,140,145,147,148,76,105,118,150)
+
+# Excluding isolated provinces from distance matrices
+m.t = matriz.t[-exclude,-(8+exclude)]
+m.t[is.na(m.t)] = 0
+m.f = matriz.f[-exclude,-(8+exclude)]
+m.f[is.na(m.f)] = 0
+
+##########################
+# CENTRALITY MEASURES
+##########################
+
+# Graph 1 in which weights are given by spatial distances
+ig.t = graph.adjacency(as.matrix(m.t[,9:143]), mode="undirected", weighted=TRUE)
+# Graph 2 in which weights are given by differences in IDUP
+ig.f = graph.adjacency(as.matrix(m.f[,9:143]), mode="undirected", weighted=TRUE)
+
+# Data frame with node-wise information
+node_data = m.t[,1:8]
+
+# Centrality #0 -- Degree centrality
+dgr = degree(
+  ig.t,
+  v = V(ig.t),
+  loops = FALSE,
+  normalized = FALSE)
+
+node_data$degree = dgr
+
+# The rural-urban gradient is defined as the absolute difference on IDUP divided 
+# over the time to travel (in hours) between the two largest municipal seats
+# It can be interpreted as the force of interaction between to provinces
+gradient = (E(ig.f)$weight)/(E(ig.t)$weight/(60^2))
+
+# Centrality #1 -- Closeness centrality (in 0-100 scale)
+clo = closeness(
+  ig.t,
+  vids = V(ig.t),
+  normalized = TRUE,
+  weights = 1/gradient # The weights here are interpreted as costs or distances
+)
+
+node_data$closeness.scale = 100*(clo-min(clo))/(max(clo)-min(clo))
+
+# Centrality #2 -- Betweenness centrality (in 0-100 scale)
+bet = betweenness(
+  ig.t,
+  v = V(ig.t),
+  directed = FALSE,
+  normalized = TRUE,
+  weights = 1/gradient # The weights here are interpreted as costs or distances
+)
+
+node_data$betweenness.scale = 100*(bet-min(bet))/(max(bet)-min(bet))
+
+# Centrality #3 -- Eigenvalue centrality (in 0-100 scale)
+eig = eigen_centrality(
+  ig.t,
+  scale = TRUE,
+  options = arpack_defaults,
+  weights = gradient # The weights here are interpreted as forces
+)
+
+node_data$eigen.scale = 100*(eig$vector-min(eig$vector))/(max(eig$vector)-min(eig$vector))
+
+# A glimpse on centrality measures of provinces
+head(node_data)
+
+node_data %>% 
+  ggplot(aes(x=closeness.scale, y=betweenness.scale,
+             color=grupo, size=eigen.scale)) +
+  geom_point(alpha=0.75) +
+  scale_y_sqrt() + theme_bw() +
+  labs(x='Closeness centrality (0-100)',y='Betweenness centrality (0-100)') +
+  guides(color=guide_legend(title="Rurality group"),
+         size=guide_legend(title='Eigen centrality')) + 
+  theme(legend.position='bottom')
+```
+
+```{r, fig.width = 10, fig.height=10}
+##########################
+# NETWORK PLOTS
+##########################
+
+# Geographic position of Colombian municipalities
+geo = read.csv2('data/geo_position.csv',header=T) %>% 
+  dplyr::select(codmun,La,Lo)
+
+# Add geographic position of largest municipal seat to data
+node_data = node_data %>% left_join(geo,'codmun')
+
+# Network layout accordint to geo position
+lay = norm_coords(cbind(node_data$Lo,node_data$La),
+                  ymin=-1, ymax=1, xmin=-1, xmax=1)
+
+# Assign a color depening on rurality group
+colrs <- c('#b8d86c','#6cb8d8','#d86cb8')
+colo = c()
+for(i in 1:135){
+  colo[i] = ifelse(node_data$grupo[i]=='Urbana',colrs[1],
+                   ifelse(node_data$grupo[i]=='Rural',colrs[3],colrs[2]))
+  }
+
+# Adapt node labels
+labels = gsub("\\.", " ", V(ig.t)$name)
+labels = gsub("1", "", labels)
+labels[1] = '       Bogotá'
+labels[69] = 'Tumaco'
+
+# Plot network
+par(omi=c(0,0,0,0), mgp=c(0,0,0),mar=c(0,0,0,0) , family = "D")
+par(mfrow=c(1,1),cex=1,cex.lab = 0.5,cex.main=0.2,cex.axis=0.2)
+plot(ig.t, 
+     edge.arrow.size=0,
+     edge.color= 'dimgray',
+     vertex.size=sqrt(node_data$IPU)/3, # Radius of node proportional to IDUP
+     edge.width=(gradient)^0.8/18,	# Width is a function of gradient
+     layout=lay,
+     rescale=FALSE,
+     vertex.shape="circle",
+     vertex.label=labels,
+     vertex.label.cex=0.45,
+     vertex.label.dist=0.3,
+     vertex.label.degree=-pi/2,
+     vertex.color=colo,
+     vertex.frame.color=colo,
+     vertex.label.family="Helvetica")
+
+# Plot network in circular layout
+la = layout.circle(ig.t)
+x = la[,1]*1.1
+y = la[,2]*1.1
+angle = ifelse(atan(-(la[,1]/la[,2]))*(180/pi) < 0, 
+               90 + atan(-(la[,1]/la[,2]))*(180/pi),
+               270 + atan(-la[,1]/la[,2])*(180/pi))
+labels[1] = 'Bogotá'
+
+par(omi=c(0,0,0,0), mgp=c(0,0,0),mar=c(0,2,0,2) , family = "D")
+par(mfrow=c(1,1),cex=1,cex.lab = 0.5,cex.main=0.2,cex.axis=0.2)
+plot(ig.t, 
+     edge.arrow.size=0,
+     edge.color= 'dimgray',
+     vertex.size=sqrt(node_data$IPU)/3, # Radius of node proportional to IDUP
+     edge.width=(gradient)^0.8/18,	# Width is a function of gradient
+     layout=la,
+     rescale=FALSE,
+     vertex.shape="circle",
+     vertex.label=NA,
+     vertex.label.cex=NA,
+     vertex.label.dist=0.5,
+     vertex.label.degree=NA,
+     vertex.color=colo,
+     vertex.frame.color=colo)
+for (i in 1:length(x)) {
+  text(x=x[i], y=y[i], labels=labels[i], adj=NULL, pos=NULL, cex=.5, srt=angle[i],
+       xpd=T, family = "Helvetica")
+}
+```
