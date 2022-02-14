@@ -4,10 +4,10 @@ Territorial configuration of Colombian provinces
 ## Background project
 
 This project contains the methods, algorithms and visualizations
-employed by me and Dr. Juan Carlos Ramírez for the composition of the
-technical report *Territorial configuration of Colombian provinces*
-(original title in Spanish), published by ECLAC (Economic Commission for
-Latin America and the Caribbean).
+employed by me and Dr. Juan Carlos Ramírez in the technical report
+*Territorial configuration of Colombian provinces* (original title in
+Spanish), published by ECLAC (Economic Commission for Latin America and
+the Caribbean).
 
 A first version of such document was published in 2017, and can be at
 ECLAC’s [digital
@@ -15,6 +15,33 @@ repository](https://repositorio.cepal.org/handle/11362/40852). An
 actualization is to be published in 2022.
 
 ## Motivation
+
+This study aims to characterize and quantify a rurality measure for
+Colombian provinces, and to use it to explore the rural-urban linkages
+and the centrality measures of these territorial entities. The
+Provincial Demographic Urbanization Index (IDUP, in Spanish) is
+constructed via Principal Component Analysis (PCA). It derives into
+three groups: urban, intermediate and rural. Ten refined categories of
+rurality are defined combining the IDUP and the travel times by car
+between the largest population seats.
+
+For each province, its rurality category is an intrinsic function of its
+demographic characteristics and its relationship with the most nearby
+urban center. This single connection implies a reduced vision of
+rural-urban relationships, which in general can encompass more complex
+entanglements of territorial, economic and social relations. The
+analysis of the complete network topology is necessary to define and
+explore provinces’ centralities, and to estimate the impact of the
+influence of other key territories. In total, 751 rural-urban linkages
+are detected amongst Colombian provinces. The strength of each link is a
+function of differences in the IDUP values and the spatial distance
+between connected provinces.
+
+In the network of rural-urban linkages different node centralities can
+approximate measures of degrees of connection, intermediation, and
+influence. This allow us to construct the categories of centrality, and
+distinguish central provinces, isolated provinces, influencial
+provinces, and ‘bridge’ provinces.
 
 ## Creating an index for rurality at the province level
 
@@ -164,15 +191,7 @@ datap %>% ggplot(aes(x=IDUP)) +
 
 <img src="README_files/figure-gfm/cars-1.png" style="display: block; margin: auto;" />
 
-## Calculating time and distance matrix
-
-``` r
-1+1
-```
-
 ## Spatial network configuration of Colombian provinces
-
-XXX
 
 ``` r
 # iGraph package for network analysis
@@ -304,7 +323,7 @@ node_data %>%
   theme(legend.position='bottom')
 ```
 
-<img src="README_files/figure-gfm/unnamed-chunk-2-1.png" style="display: block; margin: auto;" />
+<img src="README_files/figure-gfm/unnamed-chunk-1-1.png" style="display: block; margin: auto;" />
 
 ``` r
 ##########################
@@ -356,7 +375,7 @@ plot(ig.t,
      vertex.label.family="Helvetica")
 ```
 
-<img src="README_files/figure-gfm/unnamed-chunk-3-1.png" style="display: block; margin: auto;" />
+<img src="README_files/figure-gfm/unnamed-chunk-2-1.png" style="display: block; margin: auto;" />
 
 ``` r
 # Plot network in circular layout
@@ -390,4 +409,4 @@ for (i in 1:length(x)) {
 }
 ```
 
-<img src="README_files/figure-gfm/unnamed-chunk-3-2.png" style="display: block; margin: auto;" />
+<img src="README_files/figure-gfm/unnamed-chunk-2-2.png" style="display: block; margin: auto;" />
