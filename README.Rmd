@@ -25,7 +25,6 @@ For each province, its rurality category is an intrinsic function of its demogra
 In the network of rural-urban linkages different node centralities can approximate measures of degrees of connection, intermediation, and influence. This allow us to construct the categories of centrality, and distinguish central provinces, isolated provinces, influencial provinces, and 'bridge' provinces.
 
 ## Creating an index for rurality at the province level
-
 ```{r cars}
 # Packages to employ
 library("dplyr")
@@ -112,9 +111,6 @@ datap %>% ggplot(aes(x=IDUP)) +
 
 
 ## Spatial network configuration of Colombian provinces
-
-
-
 ```{r}
 # iGraph package for network analysis
 library('igraph')
