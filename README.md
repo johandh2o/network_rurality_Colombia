@@ -1,7 +1,7 @@
 Territorial configuration of Colombian provinces
 ================
 
-## Background project
+## 1\. Background project
 
 This project contains the methods, algorithms and visualizations
 employed by me and Dr. Juan Carlos Ramírez in the technical report
@@ -14,7 +14,7 @@ ECLAC’s [digital
 repository](https://repositorio.cepal.org/handle/11362/40852). An
 actualization is to be published in 2022.
 
-## Motivation
+## 2\. Motivation
 
 This study aims to characterize and quantify a rurality measure for
 Colombian provinces, and to use it to explore the rural-urban linkages
@@ -43,7 +43,7 @@ influence. This allow us to construct the categories of centrality, and
 distinguish central provinces, isolated provinces, influencial
 provinces, and ‘bridge’ provinces.
 
-## Creating an index for rurality at the province level
+## 3\. Creating an index for rurality at the province level
 
 ``` r
 # Packages to employ
@@ -57,10 +57,11 @@ library("dplyr")
 ## 
 ##     intersect, setdiff, setequal, union
 library("ggplot2")
+library("scales")
 
-#############
+###########################################################################################
 # INPUT DATA
-#############
+###########################################################################################
 
 # Demographic data on municipalities, from Colombia's census (2018), projected to 2021 
 demo_m = read.csv2('data/population_by_municipality.csv',
@@ -93,9 +94,9 @@ head(m_to_p)
 ## 5   5030      Amaga     81 Penderisco-Sinifarná    Antioquia
 ## 6   5031     Amalfi     40             Nordeste    Antioquia
 
-#############
-# METHODS
-#############
+###########################################################################################
+# AGGREGATED DATA
+###########################################################################################
 
 # Aggregate data to province level
 datap = demo_m %>% 
@@ -117,7 +118,7 @@ datap = datap %>%
               dplyr::select(codmun,Municipio,Cabecera),
             c('max_cabeceras'='Cabecera'))
 head(datap)
-## # A tibble: 6 × 12
+## # A tibble: 6 x 12
 ## # Groups:   codpro [6]
 ##   codpro Provincia       n_municipios pob_total pob_cabecera pob_disperso   area
 ##    <int> <chr>                  <int>     <int>        <int>        <int>  <dbl>
@@ -137,7 +138,7 @@ data_pc = datap %>% mutate(log_densidad_pob = log(densidad_pob),
   dplyr::select(log_densidad_pob,imp_cabeceras,log_max_cabeceras)
 ## Adding missing grouping variables: `codpro`
 head(data_pc)
-## # A tibble: 6 × 4
+## # A tibble: 6 x 4
 ## # Groups:   codpro [6]
 ##   codpro log_densidad_pob imp_cabeceras log_max_cabeceras
 ##    <int>            <dbl>         <dbl>             <dbl>
@@ -147,6 +148,10 @@ head(data_pc)
 ## 4     30            3.17           58.8             10.4 
 ## 5     40            3.12           51.0             10.3 
 ## 6     50            3.47           47.8             10.3
+
+###########################################################################################
+# CREATE AN INDEX WITH PRINCIPAL COMPONENTS ANALYSIS
+###########################################################################################
 
 # Applying Principal Component Analysis
 pc = prcomp(data_pc[,-1], center = TRUE, scale. = TRUE)
@@ -159,7 +164,7 @@ summary(pc) # The first component explains 77.1% of total variance
 
 # Standardized index:
 # The Demographic Urbanization Index of Provinces
-IDUP = 100*(pc$x[,1]-min(pc$x[,1]))/(max(pc$x[,1])-min(pc$x[,1]))
+IDUP = 100*rescale(pc$x[,1])
 datap$IDUP = IDUP
 
 # This index is a linear combination of transform variables.
@@ -170,11 +175,19 @@ coef(lm(IDUP~log(densidad_pob)+(imp_cabeceras)+log(max_cabeceras), datap))
 
 #IDUP = -46.388 +4.128*log(densidad_pob) +0.356*imp_cabeceras +4.866*log(max_cabeceras) 
 
+###########################################################################################
+# CREATE THREE BROAD GROUPS OF RURALITY
+###########################################################################################
+
 # Using cutoff defined in previous methodology, 42--65, we divide provinces
 # into three groups: urban, intermediate and rural
 datap = datap %>% 
-  mutate(grupo = ifelse(IDUP>65,'Urbana',
-                        ifelse(IDUP<42,'Rural','Intermedia')))
+  mutate(grupo = case_when(IDUP > 65 ~ "Urbana",
+                           IDUP < 42 ~ "Rural",
+                           TRUE ~ "Intermedia"))
+
+# Save the data frame
+# write.csv2(datap %>% ungroup,'agg_provincias.csv')
 
 # Histogram of The Demographic Urbanization Index of Provinces
 datap %>% ggplot(aes(x=IDUP)) + 
@@ -191,7 +204,174 @@ datap %>% ggplot(aes(x=IDUP)) +
 
 <img src="README_files/figure-gfm/cars-1.png" style="display: block; margin: auto;" />
 
-## Spatial network configuration of Colombian provinces
+## 4\. Extracting distance and time-to-travel between provinces using Google Maps
+
+To be able to extract the distance and time-to-travel between two
+provinces in Colombia we employ the [Distance Matrix API service by
+Google
+Maps](https://developers.google.com/maps/documentation/javascript/distancematrix).
+This requires creating a Google Developers account, registering a valid
+credit card and requesting a private API key. *Do not worry\!* We will
+not be charged if our data queries are below the limits:
+
+  - 2,500 free elements per day, calculated as the sum of client-side
+    and server-side queries.
+  - Maximum of 25 origins or 25 destinations per request.
+  - 100 elements per request.
+  - 100 elements per second, calculated as the sum of client-side and
+    server-side queries.
+
+*We will set the queries to respect these limits to avoid being charged*
+by constructing queries in a hierarchical and partitioned fashion.
+First, distances/times to the largest municipality of each urban
+province, which help us to create a further detailed set of rural/urban
+categories; then to the largest municipality of each intermediate
+province; and finally all the remaining pairwise connections.
+
+``` r
+# Packages to employ
+library('gmapsdistance')
+library('stringi')
+
+# Setting your private API key for Google Maps Distance Matrix API service
+# set.api.key("XXX")
+
+###########################################################################################
+###########################################################################################
+# DISTANCE AND TIME-TO-TRAVEL TO URBAN PROVINCES
+###########################################################################################
+###########################################################################################
+
+###########################################################################################
+# INPUT DATA
+###########################################################################################
+
+datag = datap[,c(1,12)] %>% # Provinces info (rurality group)
+  left_join(datam[,c(2:4)],c('codmun'='codmun')) %>% # Municipalities info (name, geo: lat, long)
+  mutate(origin = gsub(' ','+', stri_trans_general( # Clean accents on municipalities and department  names
+    paste(Municipio,Departamento,'Colombia'),id = "Latin-ASCII") # Combined name: municipality, department and Colombia
+  ))
+
+urb = c('Bogota+Colombia',datag$origin[2:14]) # Names of largest municipality of each urban province
+
+###########################################################################################
+# MAKE OPTIMAL SIZED QUERIES (TIME TO TRAVEL TO URBAN PROVINCES)
+###########################################################################################
+
+# Since there are 14 urban provinces, we need 19 queries against 7 origins and a remaining query
+# To keep query size below 100 elements
+requ = list()
+for(k in 1:19){
+  requ[[k]] = gmapsdistance(datag$origin[(k*7+8):(k*7+14)], 
+                            destination = urb, mode = "driving")
+  print(k)
+  Sys.sleep(60) # Make a query past one minute, to not overload the API
+}
+
+# Last query of remaining size
+requ[[20]] = gmapsdistance(datag$origin[148:150], 
+                           destination = urb, mode = "driving")
+
+# Extract all the distances and time-to-travel from queries' replies
+timeUrb = requ[[1]]$Time
+distanceUrb = requ[[1]]$Distance
+for(k in 2:20){
+  timeUrb = rbind.data.frame(timeUrb, requ[[k]]$Time)
+  distanceUrb = rbind.data.frame(distanceUrb, requ[[k]]$Distance)
+}
+
+# Save data
+write.csv2(timeUrb,'time_urbanas.csv')
+write.csv2(distanceUrb,'distance_urbanas.csv')
+
+###########################################################################################
+# FEED A MORE DETAILED SET OF URBAN/RURAL CATEGORIES
+###########################################################################################
+
+datag = datag %>% # Identify to which province each 'nearest' urban setting belongs
+  left_join(timeUrb %>% melt() %>% group_by(or) %>% summarise(nearest = min(value,na.rm = T)) %>%
+              left_join(timeUrb %>% melt(), c('or'='or','nearest'='value')), c('origin'='or'))
+
+# Turn time-to-travel from being mesured in seconds to hours  
+datap$nearest.time = datag$nearest/(60^2)  
+# Extract the name of the 'capital' of nearest urban province
+datap$nearest.urb = gsub('.{1}$', '',str_match(datag$variable, "Time.\\s*(.*?)\\s*+Colombia")[,2])
+
+# More detailed categories of rurality feed on time-to-travel to urban provinces
+datap = datap %>% mutate(clase1 = case_when(
+  grupo == 'Urbana' ~ '',
+  is.infinite(nearest.time)  ~ 'Aislada', # Isolated
+  nearest.time <= 2.03 & grupo != 'Urbana' ~ 'Periurbana', # Peri-urban
+  nearest.time > 2.03 & nearest.time <= 4 & grupo == 'Intermedia' ~ 'Cercana', # (Pending)
+  nearest.time > 2.03 & nearest.time <= 4 & grupo == 'Rural' ~ 'Cercana a Urbana', # Close to urban
+  nearest.time > 4 & grupo == 'Intermedia' ~ 'Alejada', # Far away
+  nearest.time > 4 & grupo == 'Rural' ~ 'X', # (Pending)
+))
+
+datag$clase1 = datap$clase1
+
+###########################################################################################
+###########################################################################################
+# DISTANCE AND TIME-TO-TRAVEL TO INTERMEDIATE PROVINCES
+###########################################################################################
+###########################################################################################
+
+# Identify intermediate provinces and rural without a detailed category
+int = datag %>% filter(clase1=='Cercana') %>% pull(origin)
+rur = datag %>% filter(clase1=='X') %>% pull(origin)
+
+###########################################################################################
+# MAKE OPTIMAL SIZED QUERIES (TIME TO TRAVEL TO INTERMEDIATE PROVINCES)
+###########################################################################################
+
+# There are 13 intermediate (cercanas) provinces and 35 rural (X) provinces.
+# We need 5 queries against 7 origins and a remaining query o keep query size below 100 elements
+requ1 = list()
+for(k in 1:5){
+  requ[[k]] = gmapsdistance(rur[(1+7*(k-1)):(7*k)], 
+                            destination = int, mode = "driving")
+  print(k)
+  Sys.sleep(60) # Make a query past one minute, to not overload the API
+}
+
+# Extract all the distances and time-to-travel from queries' replies
+timeInt = requ[[1]]$Time
+distanceInt = requ[[1]]$Distance
+for(k in 2:5){
+  timeInt = rbind.data.frame(timeInt, requ[[k]]$Time)
+  distanceInt = rbind.data.frame(distanceInt, requ[[k]]$Distance)
+}
+
+# Save data
+write.csv2(timeInt,'time_intermedias2.csv')
+write.csv2(distanceInt,'distance_intermedias2.csv')
+
+###########################################################################################
+# FEED A MORE DETAILED SET OF URBAN/RURAL CATEGORIES
+###########################################################################################
+
+datag = datag %>% # Identify to which province each 'nearest' intermediate setting belongs
+  left_join(timeInt %>% melt() %>% group_by(or) %>% summarise(nearint = min(value,na.rm = T)) %>%
+              left_join(timeInt %>% melt(), c('or'='or','nearint'='value')), c('origin'='or'))
+
+# Turn time-to-travel from being mesured in seconds to hours  
+datap$nearint.time = datag$nearint/(60^2)   
+# Extract the name of the 'capital' of nearest urban province
+datap$nearest.int = gsub('.{1}$', '',str_match(datag$variable.y, "Time.\\s*(.*?)\\s*+Colombia")[,2])
+
+# More detailed categories of rurality feed on time-to-travel to intermediate provinces
+datap = datap %>% mutate(clase2 = case_when(
+  is.na(nearint.time) ~ clase1, # Keep previous categories
+  nearint.time <= 4 ~ 'Cercana a Intermedia', # Close to intermediate
+  nearint.time > 4 ~ 'Alejada', # Far away
+))
+
+# Save complete categories
+datag$clase1 = datap$clase1
+write.csv(datap %>% ungroup,'clasificacion_completa2.csv')
+```
+
+## 5\. Spatial network configuration of Colombian provinces
 
 ``` r
 # iGraph package for network analysis
@@ -298,12 +478,12 @@ head(node_data)
 ## 5   1060          Oriente         Norte de Santander  54001       Cúcuta
 ## 6    190            Dique                    Bolívar  13001    Cartagena
 ##         IPU  grupo            clase degree closeness.scale betweenness.scale
-## 1 100.00000 Urbana    Metropolitana     35        98.87998       100.0000000
-## 2  92.10664 Urbana    Metropolitana     20       100.00000        86.9095816
-## 3  91.21812 Urbana    Metropolitana     16        39.09260        25.1282051
-## 4  83.25917 Urbana    Metropolitana     11        64.54614        32.1457490
-## 5  78.14630 Urbana No metropolitana      6        46.67634         7.3144399
-## 6  76.05419 Urbana No metropolitana     18        35.70341         0.4318489
+## 1 100.00000 Urbana    Metropolitana     35       100.00000       100.0000000
+## 2  92.10664 Urbana    Metropolitana     20        95.45357        86.9095816
+## 3  91.21812 Urbana    Metropolitana     16        43.00506        25.1282051
+## 4  83.25917 Urbana    Metropolitana     11        59.71955        32.1457490
+## 5  78.14630 Urbana No metropolitana      6        56.86389         7.3144399
+## 6  76.05419 Urbana No metropolitana     18        29.57199         0.4318489
 ##    eigen.scale
 ## 1 1.000000e+02
 ## 2 4.893499e+00
@@ -323,7 +503,7 @@ node_data %>%
   theme(legend.position='bottom')
 ```
 
-<img src="README_files/figure-gfm/unnamed-chunk-1-1.png" style="display: block; margin: auto;" />
+<img src="README_files/figure-gfm/unnamed-chunk-2-1.png" style="display: block; margin: auto;" />
 
 ``` r
 ##########################
@@ -375,9 +555,10 @@ plot(ig.t,
      vertex.label.family="Helvetica")
 ```
 
-<img src="README_files/figure-gfm/unnamed-chunk-2-1.png" style="display: block; margin: auto;" />
+<img src="README_files/figure-gfm/unnamed-chunk-3-1.png" style="display: block; margin: auto;" />
 
 ``` r
+
 # Plot network in circular layout
 la = layout.circle(ig.t)
 x = la[,1]*1.1
@@ -409,4 +590,4 @@ for (i in 1:length(x)) {
 }
 ```
 
-<img src="README_files/figure-gfm/unnamed-chunk-2-2.png" style="display: block; margin: auto;" />
+<img src="README_files/figure-gfm/unnamed-chunk-3-2.png" style="display: block; margin: auto;" />
